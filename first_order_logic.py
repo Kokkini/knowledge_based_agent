@@ -1,9 +1,4 @@
 # First knowledge based agent
-class Statement:
-    def __init__(self, function, object):
-        self.function = function
-        self.object = object
-
 class Function:
     def __init__(self, name):
         self.name = name
