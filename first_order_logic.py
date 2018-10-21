@@ -51,6 +51,12 @@ class Statement:
             if this.name != that.name:
                 return False
         return True
+    def copy(self):
+        new_var_const = []
+        for var_const in self.var_const:
+            new_var_const.append(var_const.copy())
+
+        return Statement(self.is_positive, self.relation, new_var_const)
 
     def to_string(self):
         str = ''
@@ -73,11 +79,15 @@ class Constant:
     # necessary properties: identifiable
     def __init__(self, name):
         self.name = name
+    def copy(self):
+        return Constant(self.name)
 
 class Variable:
     # necessary properties: identifiable
     def __init__(self, name):
         self.name = name
+    def copy(self):
+        return Variable(self.name)
 
 class Implication:
     # necessary properties:
@@ -140,6 +150,42 @@ class Implication:
             for var in var_names[key][1]:
                 var.name = new_name
 
+    def get_var_dict(self):
+        # make a dictionary of variables (name -> [var1, var2, ...])
+        var_dict = {}
+        statements = self.premise + [self.conclusion]
+        for statement in statements:
+            for var_const in statement.var_const:
+                if isinstance(var_const, Variable):
+                    if var_const.name in var_dict:
+                        var_dict[var_const.name].append(var_const)
+                    else:
+                        var_dict[var_const.name] = [var_const]
+        return var_dict
+
+    def copy(self):
+        new_premise = []
+        for statement in self.premise:
+            new_premise.append(statement.copy())
+        new_conclusion = self.conclusion.copy()
+        return Implication(new_premise, new_conclusion)
+
+    def substitute(self, name_const_dict):
+        # name_const_dict: "x" -> Constant("Charlie")
+        # "x" is the name of the variable
+        copy = self.copy()
+        statements = copy.premise + [copy.conclusion]
+        for statement in statements:
+            for i in range(len(statement.var_const)):
+                var_const = statement.var_const[i]
+                if isinstance(var_const, Variable) and var_const.name in name_const_dict:
+                    statement.var_const[i] = name_const_dict[var_const.name]
+
+        copy.sort_premise()
+        copy.reform_premise()
+        return copy
+
+
     def to_string(self):
         str = ''
         for i in range(len(self.premise)):
@@ -154,13 +200,80 @@ class Implication:
 class KnowledgeBase:
     def __init__(self):
         self.implications = []
+        self.facts = [] # implication of the form [] -> Parent(Harry, Kate)
+        self.constants = {}
 
     def tell(self, implication):
         # add the implication to KB, if it's not the same as another implication
         for added_im in self.implications:
             if added_im.is_equal(implication): return
-
         self.implications.append(implication)
+        if len(implication.premise) == 0:
+            self.facts.append(implication)
+        statements = implication.premise + [implication.conclusion]
+        for statement in statements:
+            for var_const in statement.var_const:
+                if isinstance(var_const, Constant) and var_const.name not in self.constants:
+                    self.constants[var_const.name] = var_const
+
+    def statement_is_satisfied(self, statement):
+        for var_const in statement.var_const:
+            if isinstance(var_const, Variable):
+                return False
+        for im in self.facts:
+            if statement.is_equal_reformed(im.conclusion): return True
+
+        return False
+
+
+    def premise_is_satisfied(self, implication):
+        for statement in implication.premise:
+            if not self.statement_is_satisfied(statement):
+                return False
+        return True
+
+    def expand_by_substitution(self):
+        for im in self.implications:
+            var_dict = im.get_var_dict()
+            var_names = list(var_dict.keys())
+            all_const_selection = self.get_all_selections(len(var_names), self.constants)
+            for selection in all_const_selection:
+                name_const_dict = {var_names[i]:Constant(selection[i]) for i in range(len(var_names))}
+                self.tell(im.substitute(name_const_dict))
+
+
+    def expand_by_inference(self):
+        to_add = []
+        for im in self.implications:
+            size = len(self.implications)
+            if self.premise_is_satisfied(im):
+                new_im = Implication([], im.conclusion)
+                self.tell(new_im)
+                if size < len(self.implications):
+                    to_add.append(new_im)
+        if len(to_add) > 0:
+            self.expand_by_inference()
+
+    def expand(self):
+        self.expand_by_substitution()
+        self.expand_by_inference()
+
+    def get_all_selections(self, k, list2):
+        # return a list of all possible selections when selecting k elements from list2 (with replacement)
+        # a selection is a list of elements
+
+        if k== 0:
+            return []
+        if k==1:
+            return [[element] for element in list2 ]
+
+        all_selections = []
+        sub_selections = self.get_all_selections(k-1, list2)
+        for element in list2:
+            for selection in sub_selections:
+                all_selections.append([element] + selection)
+        return all_selections
+
 
     def ask(self, query):
         pass
@@ -170,6 +283,10 @@ class KnowledgeBase:
         for i in range(len(self.implications)):
             str += self.implications[i].to_string() + '\n'
         return str
+
+    def forward_chaining(self, query):
+
+        return
 
 def test_print():
     KB = KnowledgeBase()
@@ -197,8 +314,36 @@ def test_print():
     KB.tell(im5)
     print(KB.to_string())
 
+def test_inference():
+    KB = KnowledgeBase()
+    A = Relation("A")
+    B = Relation("B")
+    C = Relation("C")
+
+
+    KB.tell(Implication([Statement(True, A, [Variable("x")])], Statement(True, B, [Variable("x")])))
+    KB.tell(Implication([Statement(True, B, [Variable("x")])], Statement(True, C, [Variable("x")])))
+    KB.tell(Implication([], Statement(True, A, [Constant("Quang")])))
+
+    print(KB.to_string())
+    KB.expand()
+    print(KB.to_string())
+
+def test_parent_sibling():
+    KB = KnowledgeBase()
+    Parent = Relation("Parent")
+    Sibling = Relation("Sibling")
+
+    KB.tell(Implication([Statement(True, Parent, [Variable("x"), Variable("y")]), Statement(True, Parent, [Variable("x"), Variable("z")])], Statement(True, Sibling, [Variable("y"), Variable("z")])))
+    KB.tell(Implication([], Statement(True, Parent, [Constant("Hoang"), Constant("Quang")])))
+    KB.tell(Implication([], Statement(True, Parent, [Constant("Hoang"), Constant("Tung")])))
+
+    print(KB.to_string())
+    KB.expand()
+    print(KB.to_string())
+
 def main():
-    test_print()
+    test_parent_sibling()
 
 
 main()
